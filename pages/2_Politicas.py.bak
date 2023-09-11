@@ -1,0 +1,156 @@
+import streamlit as st
+from streamlit_extras.dataframe_explorer import dataframe_explorer
+import pandas as pd
+import numpy as np
+import os
+import subprocess
+import json
+import csv
+from datetime import datetime
+import os
+
+import meraki
+from google.oauth2 import service_account
+from google.cloud import bigquery
+
+API_KEY = 'd093bbbd03d3b6e02d86b5a1e7b2266493f13b9c'
+
+# Create API client.
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"]
+)
+client = bigquery.Client(credentials=credentials)
+
+st.set_page_config(
+     page_title="MerakiLit - Politicas",
+     layout="wide",
+     initial_sidebar_state="expanded"
+ )
+ 
+
+# Politica a aplicar: 112	
+
+st.title('Chromebooks Alumnos')
+
+# Perform query.
+# Uses st.cache_data to only rerun when the query changes or after 10 min.
+@st.cache_data(ttl=600)
+def run_query(query):
+    query_job = client.query(query)
+    rows_raw = query_job.result()
+    # Convert to list of dicts. Required for st.cache_data to hash the return value.
+    rows = [dict(row) for row in rows_raw]
+    return rows
+
+
+colegios = run_query('''
+SELECT 
+distinct Sigla
+FROM 
+`sip-red-de-colegios.redes.meraki_redes` mr
+order by Sigla
+''')
+df_colegios = pd.DataFrame(colegios)
+
+option = st.selectbox(
+    'Colegio',
+    df_colegios,
+	index=0)
+
+#df = pd.DataFrame()
+#st.write('You selected:', option)
+
+# Instantiate a Meraki dashboard API session
+dashboard = meraki.DashboardAPI(
+    api_key=API_KEY,
+    base_url='https://api.meraki.com/api/v1/',
+    output_log=False,
+    log_file_prefix=os.path.basename(__file__)[:-3],
+    log_path='',
+    print_console=False
+)
+
+
+if st.button('Buscar', key='buscar'):
+	with st.spinner('Buscando Información...'):
+		rows = run_query(f'''
+			SELECT 
+			mr.ID_Red,
+      	mp.Grupo_ID as politica_aplicar,
+			cd.annotatedAssetId tipo,
+			cd.annotatedLocation ubicacion,
+			cd.lastSync fecha_sincronizacion,
+			cd.model modelo,
+			CONCAT(SUBSTR(cd.macAddress,0,2),':',SUBSTR(cd.macAddress,3,2),':',SUBSTR(cd.macAddress,5,2),':',SUBSTR(cd.macAddress,7,2),':',SUBSTR(cd.macAddress,9,2),':',SUBSTR(cd.macAddress,11,2)) as mac,
+			cd.orgUnitPath organizacion,
+			cd.serialNumber serie,
+			cd.status estado,
+			us.name_fullName as ultimo_usuario,
+			SPLIT(us.externalIds_0_value,"-")[OFFSET(0)] as rut_usuario,
+			dw.sigla_colegio as alumno_sigla_colegio,
+			dw.estado as alumno_estado,
+			dw.nivel as alumno_nivel,
+			dw.letra as alumno_letra
+			FROM 
+			`sip-red-de-colegios.gsuite.cros_device` cd
+			left join
+			`sip-red-de-colegios.gsuite.cros_activity_users` cau
+			on cau.deviceId = cd.deviceId
+			left join `sip-red-de-colegios.gsuite.usuarios_sip` us
+			on trim(lower(us.primaryEmail)) = trim(lower(SPLIT(cau.recentUsersemail, " ")[OFFSET(0)]))
+			left join `sip-red-de-colegios.dw.DW_ALUMNO` dw
+			on dw.rut = SPLIT(us.externalIds_0_value,"-")[OFFSET(0)] and dw.ciclo_lectivo = extract(year from current_date())
+			left join `sip-red-de-colegios.redes.meraki_redes` mr
+			on mr.Sigla = cd.annotatedLocation
+      left join `sip-red-de-colegios.redes.meraki_politicas` mp
+      on mp.Red = mr.ID_Red and mp.Nombre = 'Colegio - Laboratorios'
+			where 
+			cd.annotatedLocation = '{option}'
+			and cd.status = 'ACTIVE' 
+			and cd.annotatedLocation is not null
+			and cd.orgUnitPath like '%Alumnos%'
+			and extract(year from cd.lastSync) = extract(year from current_date())
+			''')
+		df = pd.DataFrame(rows)
+		politica = []
+		for rowDF in df.itertuples():
+			if rowDF.ID_Red is not None:
+				try:
+					response = dashboard.networks.getNetworkClientPolicy(rowDF.ID_Red, rowDF.mac)
+					politica.append(response['groupPolicyId'])
+					#response_pol = dashboard.networks.updateNetworkClientPolicy(rowDF.ID_Red, rowDF.mac, 'Group policy', groupPolicyId=rowDF.politica_aplicar)
+				except Exception as e:
+					politica.append('')
+			else:
+				politica.append('')
+		#df["ID_Politica"] = politica      
+		df.insert(loc=0, column='ID_Politica', value=politica)
+
+		filtered_df = dataframe_explorer(df)
+		st.dataframe(filtered_df, use_container_width=True)
+				
+		if st.button('Aplicar Politica', key='aplicar'):
+			with st.spinner('Buscando Información...'):
+				
+				for rowDF in df.itertuples():
+					if rowDF.ID_Red is not None:
+						try:
+							if rowDF.ID_Politica != rowDF.politica_aplicar:
+								response_pol = dashboard.networks.updateNetworkClientPolicy(rowDF.ID_Red, rowDF.mac, 'Group policy', groupPolicyId=rowDF.politica_aplicar)
+								st.write('Politica para MAC:'+rowDF.mac+' aplicada.\n')
+								#response2 = dashboard.networks.getNetworkClientPolicy(rowDF.ID_Red, rowDF.mac)
+								#politica.append(response2['groupPolicyId'])
+							else:
+								st.write('Politica para MAC:'+rowDF.mac+' OK.\n')
+							#	politica.append(response['groupPolicyId'])
+						except Exception as e:
+							#politica.append('')
+							print("err")
+					else:
+						#politica.append('')
+						print("err")
+				#df["ID_Politica"] = politica 
+				#df.insert(loc=0, column='ID_Politica', value=politica)
+
+				#filtered_df = dataframe_explorer(df)
+				#st.dataframe(filtered_df, use_container_width=True)

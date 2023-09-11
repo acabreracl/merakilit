@@ -1,0 +1,87 @@
+import streamlit as st
+from streamlit_extras.dataframe_explorer import dataframe_explorer
+import pandas as pd
+import numpy as np
+import os
+import subprocess
+import json
+import csv
+from datetime import datetime
+import os
+
+import meraki
+from google.oauth2 import service_account
+from google.cloud import bigquery
+
+API_KEY = 'd093bbbd03d3b6e02d86b5a1e7b2266493f13b9c'
+
+# Create API client.
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"]
+)
+client = bigquery.Client(credentials=credentials)
+
+st.set_page_config(
+     page_title="MerakiLit - Politicas",
+     layout="wide",
+     initial_sidebar_state="expanded"
+ )
+ 
+
+# Politica a aplicar: 112	
+
+st.title('Chromebooks Alumnos')
+
+# Perform query.
+# Uses st.cache_data to only rerun when the query changes or after 10 min.
+@st.cache_data(ttl=600)
+def run_query(query):
+    query_job = client.query(query)
+    rows_raw = query_job.result()
+    # Convert to list of dicts. Required for st.cache_data to hash the return value.
+    rows = [dict(row) for row in rows_raw]
+    return rows
+
+
+colegios = run_query('''
+SELECT 
+ID_Red
+FROM 
+`sip-red-de-colegios.redes.meraki_redes` mr
+order by Sigla
+''')
+df_colegios = pd.DataFrame(colegios)
+
+
+# Instantiate a Meraki dashboard API session
+dashboard = meraki.DashboardAPI(
+    api_key=API_KEY,
+    base_url='https://api.meraki.com/api/v1/',
+    output_log=False,
+    log_file_prefix=os.path.basename(__file__)[:-3],
+    log_path='',
+    print_console=False
+)
+
+nombrePol = []
+idPolitica = []
+red = []
+for rowC in df_colegios.itertuples():
+	try:
+		response = dashboard.networks.getNetworkGroupPolicies(rowC.ID_Red)
+
+		for r in response:
+			red.append(rowC.ID_Red)
+			nombrePol.append(r['name'])
+			idPolitica.append(r['groupPolicyId'])
+	except:
+		print("err")
+		
+dataPol = {
+	'Red': red,
+	'Nombre': nombrePol,
+	'ID': idPolitica
+}
+dfPol = pd.DataFrame(dataPol)
+st.dataframe(dfPol)
+				
