@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-
+from st_aggrid import AgGrid
 import meraki
 
 
@@ -54,68 +54,76 @@ def check_password():
         return True
 
 if check_password():
-    if st.button('Ver/Refrescar Estado', key='enlaces'):
-        organizations = dashboard.organizations.getOrganizations()
-        for org in organizations:
-            org_id = org['id']
+    #if st.button('Ver/Refrescar Estado', key='enlaces'):
+    organizations = dashboard.organizations.getOrganizations()
+    for org in organizations:
+        org_id = org['id']
+        
+        try:
+            devices = dashboard.organizations.getOrganizationDevicesStatuses(org_id, total_pages='all')
+        except meraki.APIError as e:
+            print(f'Meraki API error: {e}')
+            print(f'status code = {e.status}')
+            print(f'reason = {e.reason}')
+            print(f'error = {e.message}')
+            continue
+        except Exception as e:
+            print(f'some other error: {e}')
+            continue
             
-            try:
-                devices = dashboard.organizations.getOrganizationDevicesStatuses(org_id, total_pages='all')
-            except meraki.APIError as e:
-                print(f'Meraki API error: {e}')
-                print(f'status code = {e.status}')
-                print(f'reason = {e.reason}')
-                print(f'error = {e.message}')
-                continue
-            except Exception as e:
-                print(f'some other error: {e}')
-                continue
-                
-            total = len(devices)
-            counter = 1
-            cols = ["Nombre","Estado", "Modelo", "Serie"]
-            rows = []
+        total = len(devices)
+        counter = 1
+        cols = ["Nombre","Estado", "Modelo", "Serie"]
+        rows = []
+        
+        with st.spinner('Buscando Información...'):
+            for dev in devices:
+                try:
+                    rows.append({"Nombre":dev["name"],
+                                "Estado": dev["status"],
+                                "Modelo": dev["model"],
+                                "Serie": dev["serial"]
+                    })
+                except:
+                    rows.append({"Nombre":"N/A",
+                                "Estado": "",
+                                "Modelo": "",
+                                "Serie": ""
+                    })
             
-            with st.spinner('Buscando Información...'):
-                for dev in devices:
-                    try:
-                        rows.append({"Nombre":dev["name"],
-                                    "Estado": dev["status"],
-                                    "Modelo": dev["model"],
-                                    "Serie": dev["serial"]
-                        })
-                    except:
-                        rows.append({"Nombre":"N/A",
-                                    "Estado": "",
-                                    "Modelo": "",
-                                    "Serie": ""
-                        })
+            def highlight_cells(value):
+                if value == 'offline':
+                    color = '#FFB3BA' # Red
+                elif value == 'online':
+                    color = '#BAFFC9' # Green
+                elif value == 'alerting' or value == 'dormant':
+                    color = '#BAE1FF' # Blue
+                else:
+                    color = ''
+                return 'background-color: {}'.format(color)
+            
+            df = pd.DataFrame(rows, columns=cols)
+            df.sort_values(by=['Nombre'])
+            
+            #col1, col2 = st.columns(2)
+            rerun_button = st.button('Recargar')
+            if rerun_button:
+                st.experimental_rerun()
                 
-                def highlight_cells(value):
-                    if value == 'offline':
-                        color = '#FFB3BA' # Red
-                    elif value == 'online':
-                        color = '#BAFFC9' # Green
-                    elif value == 'alerting' or value == 'dormant':
-                        color = '#BAE1FF' # Blue
-                    else:
-                        color = ''
-                    return 'background-color: {}'.format(color)
-                
-                df = pd.DataFrame(rows, columns=cols)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("Dispositivos Offline ("+str(len(df.query("Estado == 'offline'")))+")")
-                    st.dataframe(df.query("Estado == 'offline'"))
-                    
-                    st.subheader("Alertando ("+str(len(df.query("Estado == 'alerting'")))+")")
-                    st.dataframe(df.query("Estado == 'alerting'"))
-                    
-                    st.subheader("Offline por mas de una semana ("+str(len(df.query("Estado == 'dormant'")))+")")
-                    st.dataframe(df.query("Estado == 'dormant'"))
-                
-                with col2:
-                    st.subheader("Dispositivos Online ("+str(len(df.query("Estado == 'online'")))+")")
-                    st.dataframe(df.query("Estado == 'online'"), height=950)
+            #with col1:
+            st.subheader("Dispositivos Offline ("+str(len(df.query("Estado == 'offline'")))+")")
+            #st.dataframe(df.query("Estado == 'offline'"))
+            AgGrid(df.query("Estado == 'offline'"), fit_columns_on_grid_load=True, theme="material")
+            
+            st.subheader("Alertando ("+str(len(df.query("Estado == 'alerting'")))+")")
+            #st.dataframe(df.query("Estado == 'alerting'"))
+            AgGrid(df.query("Estado == 'alerting'"), fit_columns_on_grid_load=True, theme="material")
+            
+            st.subheader("Offline por mas de una semana ("+str(len(df.query("Estado == 'dormant'")))+")")
+            #st.dataframe(df.query("Estado == 'dormant'"))
+            AgGrid(df.query("Estado == 'dormant'"), fit_columns_on_grid_load=True, theme="material")
+        
+            #with col2:
+            st.subheader("Dispositivos Online ("+str(len(df.query("Estado == 'online'")))+")")
+            #st.dataframe(df.query("Estado == 'online'"), height=950)
+            AgGrid(df.query("Estado == 'online'"), fit_columns_on_grid_load=True, theme="material")

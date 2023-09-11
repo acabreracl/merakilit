@@ -52,66 +52,69 @@ if check_password():
     )
 
 
-    if st.button('Ver estado de Enlaces', key='enlaces'):
-        organizations = dashboard.organizations.getOrganizations()
-        for org in organizations:
-            org_id = org['id']
-            
-            try:
-                devices = dashboard.organizations.getOrganizationUplinksStatuses(org_id)
-            except meraki.APIError as e:
-                print(f'Meraki API error: {e}')
-                print(f'status code = {e.status}')
-                print(f'reason = {e.reason}')
-                print(f'error = {e.message}')
-                continue
-            except Exception as e:
-                print(f'some other error: {e}')
-                continue
+    #if st.button('Ver estado de Enlaces', key='enlaces'):
+    organizations = dashboard.organizations.getOrganizations()
+    for org in organizations:
+        org_id = org['id']
         
-            #todays_date = f'{datetime.now():%Y-%m-%d}'
-            #folder_name = f'Org {org_id} clients {todays_date}'
-            #if folder_name not in os.listdir():
-            #    os.mkdir(folder_name)
-                
-            total = len(devices)
-            counter = 1
-            cols = ["Red","Timezone", "Modelo", "Fecha", "WAN 1", "WAN 2"]
-            rows = []
+        try:
+            devices = dashboard.organizations.getOrganizationUplinksStatuses(org_id)
+        except meraki.APIError as e:
+            print(f'Meraki API error: {e}')
+            print(f'status code = {e.status}')
+            print(f'reason = {e.reason}')
+            print(f'error = {e.message}')
+            continue
+        except Exception as e:
+            print(f'some other error: {e}')
+            continue
+    
+        #todays_date = f'{datetime.now():%Y-%m-%d}'
+        #folder_name = f'Org {org_id} clients {todays_date}'
+        #if folder_name not in os.listdir():
+        #    os.mkdir(folder_name)
             
-            with st.spinner('Buscando Información...'):
-                for dev in devices:
-                    red = dashboard.networks.getNetwork(dev["networkId"])
-                    nombre_red = red["name"]
-                    timezone = red["timeZone"]
-                    
-                    try:
-                        rows.append({"Red":nombre_red,
-                                    "Timezone": timezone,
-                                    "Modelo": dev["model"],
-                                    "Fecha": dev["lastReportedAt"],
-                                    "WAN 1": dev["uplinks"][0]["status"],
-                                    "WAN 2": dev["uplinks"][1]["status"]
-                        })
-                    except:
-                        rows.append({"Red":nombre_red,
-                                    "Timezone": timezone,
-                                    "Modelo": dev["model"],
-                                    "Fecha": dev["lastReportedAt"],
-                                    "WAN 1": dev["uplinks"][0]["status"],
-                                    "WAN 2": ""
-                        })
+        total = len(devices)
+        counter = 1
+        cols = ["Red","Timezone", "Modelo", "Fecha", "WAN 1", "WAN 2"]
+        rows = []
+        
+        with st.spinner('Buscando Información...'):
+            for dev in devices:
+                red = dashboard.networks.getNetwork(dev["networkId"])
+                nombre_red = red["name"]
+                timezone = red["timeZone"]
                 
-                def highlight_cells(value):
-                    if value == 'failed':
-                        color = '#FFB3BA' # Red
-                    elif value == 'active':
-                        color = '#BAFFC9' # Green
-                    elif value == 'ready':
-                        color = '#BAE1FF' # Blue
-                    else:
-                        color = ''
-                    return 'background-color: {}'.format(color)
-                
-                df = pd.DataFrame(rows, columns=cols)
-                st.dataframe(df.style.applymap(highlight_cells), height=950)
+                try:
+                    rows.append({"Red":nombre_red,
+                                "Timezone": timezone,
+                                "Modelo": dev["model"],
+                                "Fecha": dev["lastReportedAt"],
+                                "WAN 1": dev["uplinks"][0]["status"],
+                                "WAN 2": dev["uplinks"][1]["status"]
+                    })
+                except:
+                    rows.append({"Red":nombre_red,
+                                "Timezone": timezone,
+                                "Modelo": dev["model"],
+                                "Fecha": dev["lastReportedAt"],
+                                "WAN 1": dev["uplinks"][0]["status"],
+                                "WAN 2": ""
+                    })
+            
+            def highlight_cells(value):
+                if value == 'failed':
+                    color = '#FFB3BA' # Red
+                elif value == 'active':
+                    color = '#BAFFC9' # Green
+                elif value == 'ready':
+                    color = '#BAE1FF' # Blue
+                else:
+                    color = ''
+                return 'background-color: {}'.format(color)
+            
+            df = pd.DataFrame(rows, columns=cols)
+            rerun_button = st.button('Recargar')
+            if rerun_button:
+                st.experimental_rerun()
+            st.dataframe(df.style.applymap(highlight_cells), height=950)
